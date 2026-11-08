@@ -1,0 +1,62 @@
+<!doctype html>
+<!--
+  SPDX-FileCopyrightText: 2026 OpenTube contributors
+  SPDX-License-Identifier: GPL-3.0-or-later
+
+  OpenTube TV player page. Hosted on HTTPS so that YouTube's embedded player receives a
+  Referer that identifies OpenTube (YouTube API Services, Required Minimum Functionality).
+  It contains YouTube's unmodified embedded player and nothing drawn over it. The TV app
+  frames this page and sends only documented IFrame API commands (play, pause, seek).
+  It downloads, stores and proxies nothing.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>OpenTube TV player</title>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+      #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+    </style>
+  </head>
+  <body>
+    <iframe id="player" title="YouTube video player" allow="autoplay; encrypted-media; picture-in-picture"
+      referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    <script>
+      (function () {
+        'use strict';
+        var YT_ORIGIN = 'https://www.youtube-nocookie.com';
+        var params = new URLSearchParams(location.search);
+        var id = params.get('v') || '';
+        var start = parseInt(params.get('t') || '0', 10) || 0;
+        var player = document.getElementById('player');
+        // Only YouTube video IDs; anything else is ignored (no arbitrary URLs).
+        if (!/^[A-Za-z0-9_-]{11}$/.test(id)) {
+          document.body.textContent = 'Invalid video';
+          return;
+        }
+        var parentOrigin = '*'; // the TV app runs at file://, whose origin is opaque
+        player.src = YT_ORIGIN + '/embed/' + id + '?enablejsapi=1&autoplay=1&playsinline=1&rel=0&start=' + start +
+          '&origin=' + encodeURIComponent(location.origin);
+        player.addEventListener('load', function () {
+          player.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), YT_ORIGIN);
+        });
+        // YouTube -> TV app: forward player events unchanged.
+        window.addEventListener('message', function (e) {
+          if (e.source === player.contentWindow && e.origin === YT_ORIGIN) {
+            parent.postMessage(typeof e.data === 'string' ? e.data : JSON.stringify(e.data), parentOrigin);
+            return;
+          }
+          // TV app -> YouTube: only documented IFrame API commands.
+          if (e.source !== parent) return;
+          var msg;
+          try { msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch (err) { return; }
+          var allowed = { playVideo: 1, pauseVideo: 1, seekTo: 1, mute: 1, unMute: 1, setVolume: 1 };
+          if (!msg || msg.event !== 'command' || !allowed[msg.func]) return;
+          player.contentWindow.postMessage(JSON.stringify({ event: 'command', func: msg.func, args: msg.args || [] }), YT_ORIGIN);
+        });
+      })();
+    </script>
+  </body>
+</html>
